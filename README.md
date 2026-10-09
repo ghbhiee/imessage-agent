@@ -1,171 +1,171 @@
 # imessage-agent
 
+English | [中文](README.zh.md)
+
 **Drive your AI agents from iMessage — with your own Apple ID, on your own Mac.**
+
 A small relay that watches `chat.db`, hands your messages to an agent
 ([Claude Code](https://docs.anthropic.com/en/docs/claude-code) via the Agent SDK,
 or [DeepSeek Harness / dsh](https://github.com/deepseek-ai/deepseek-harness)),
 and sends the reply back through Messages.app — as *you*.
 
-> 中文说明在下面。The design notes below explain *why* it is built this way;
-> most of it is about iMessage quirks you will hit with any agent ↔ iMessage bridge.
+## What it is
 
----
-
-## 这是什么
-
-在 iPhone 上给一个「Agent 联系人」发 iMessage，Mac 上的 Agent 收到、干活、再用**你自己的 Apple ID** 回你。
+Text an "agent contact" from your iPhone; the agent on your Mac picks it up, does the work, and replies with **your own Apple ID**.
 
 ```
-iPhone「信息」 ──▶ iCloud 同步 ──▶ Mac 的 chat.db ──▶ bridge.py ──▶ Claude / dsh
-      ▲                                                              │
-      └──────────── Messages.app（AppleScript，你的账号）◀────────────┘
+iPhone Messages ──▶ iCloud sync ──▶ chat.db on the Mac ──▶ bridge.py ──▶ Claude / dsh
+      ▲                                                                    │
+      └──────────── Messages.app (AppleScript, your account) ◀─────────────┘
 ```
 
-- 一个 Apple ID、一台 Mac、一个 macOS 用户，你和 Agent 共用。
-- 每个会话（单聊或群）可以接不同的 Agent：比如联系人 A → Claude，联系人 B → dsh。
-- 白名单路由：只有配置里列出的会话会被处理，其它会话只读不回。
-- Claude 的权限审批也走 iMessage：回 `1` 允许、`2` 总是允许、`3` 拒绝。
-- dsh 的会话可以直接放在 dsh 网页版里，网页和手机看到的是同一个会话。
+- One Apple ID, one Mac, one macOS user — shared by you and the agent.
+- Each conversation (a 1:1 chat or a group) can route to a different agent: contact A → Claude, contact B → dsh.
+- Allowlist routing: only the conversations listed in the config are handled; everything else is read and ignored.
+- Claude's permission prompts arrive over iMessage too: reply `1` to allow, `2` to always allow, `3` to deny.
+- dsh sessions can live in the dsh web UI, so the browser and your phone show the very same session.
 
-## 为什么这么做
+## Why it is built this way
 
-### 1. 为什么不给 Agent 单独开一个 Apple ID
+Most of this section is about iMessage quirks you will hit with any agent ↔ iMessage bridge.
 
-最直观的做法是给 Agent 一个自己的 Apple ID，你和它像两个人一样聊天。但这样做的 Agent 是「另一个人」：
+### 1. Why not give the agent its own Apple ID
 
-- 它要**以你的身份**办事：替你回消息、用你登录着的网站和 App、读写你的文件。换个账号就做不到了。
-- 它和你**共用这台电脑**。一台 Mac 的一个 macOS 用户里，「信息」只能登录一个 Apple ID；要两个账号同时在线，就得再开一个 macOS 用户或者虚拟机，而 Agent 在另一个用户里就碰不到你的东西了。
+The obvious design is a separate Apple ID for the agent, so the two of you chat like two people. But then the agent is *someone else*:
 
-所以这里的前提是：**Agent 就是你**，只是多了一只手。
+- It has to act **as you**: reply to messages for you, use the websites and apps you are signed in to, read and write your files. A different account can't do that.
+- It **shares the computer** with you. Within one macOS user, Messages can only be signed in to one Apple ID. Running two accounts at once means a second macOS user or a VM — and an agent living in another user can't reach your stuff.
 
-### 2. 同一个账号，怎么分清哪句是你说的、哪句是 Agent 说的
+So the premise here is: **the agent is you**, just with an extra pair of hands.
 
-在 `chat.db` 里，你在 iPhone 上打的字和 Agent 在 Mac 上发的消息，都是 `is_from_me = 1`，没有任何字段能区分来自哪台设备。
+### 2. One account: telling your messages apart from the agent's
 
-常见的做法是「按文本猜」：记住 Agent 刚发过什么，看到一样的就当回声丢掉，再加个限速兜底。实测这会吞掉你真正发的消息，也会重复回复。
+In `chat.db`, what you type on your iPhone and what the agent sends from the Mac are both `is_from_me = 1`. No column says which device sent a message.
 
-这里用的是**确定性规则**：
+The common workaround is to guess from text: remember what the agent just sent, drop anything identical as an echo, and add a rate limit as a safety net. In practice this swallows messages you really sent and produces duplicate replies.
 
-- Agent 发出的每条消息都带固定前缀（Claude 默认 `🤖 `，dsh 默认 `🐳 `）。带前缀的一律跳过，不带的就是你。
-- 另外再记最近 200 条自己发出的文本指纹，作为第二道保险。
-- 没有限速，不会吞消息。
+This relay uses **deterministic rules** instead:
 
-### 3. 为什么不直接「发给自己」
+- Every message the agent sends starts with a fixed prefix (`🤖 ` for Claude, `🐳 ` for dsh by default). Anything with a prefix is skipped; anything without one is you.
+- As a second safeguard it keeps fingerprints of the last 200 texts it sent.
+- No rate limit, so nothing gets swallowed.
 
-iMessage 发给自己（自己的手机号或邮箱）是可以的，本项目也支持（`self_chat`）。但它有个副作用：**每条消息在 `chat.db` 里有两行**：
+### 3. Why not just message yourself
 
-| 行 | `is_from_me` | `reply_to_guid` |
+Messaging yourself (your own number or email) works, and the relay supports it (`self_chat`). The catch: **every message produces two rows** in `chat.db`:
+
+| Row | `is_from_me` | `reply_to_guid` |
 |---|---|---|
-| 本体 | 1 | （上一条） |
-| 回声 | 0 | 指向本体的 guid |
+| original | 1 | (previous message) |
+| echo | 0 | the original's guid |
 
-桥接会把回声折成本体只处理一次（`reply_to_guid` 是确定性的关联），但 Mac 上的「信息」会把每条都显示两遍，看着很乱。
+The relay folds the echo into the original and handles it once (`reply_to_guid` is a deterministic link), but Messages on the Mac shows every message twice, which gets messy.
 
-### 4. 推荐做法：一个「沉默的对方」
+### 4. Recommended: a "silent peer"
 
-找一个**你控制、但平时不会说话**的 iMessage 地址，建一个联系人（比如叫「Claude」），跟它单聊：
+Pick an iMessage address **that you control but that never talks**, save it as a contact (say, "Claude"), and chat with it 1:1:
 
-- 你发的消息：`is_from_me = 1`，只有一行，没有回声。
-- Agent 的回复：也是你的账号发的，带 🤖 前缀。
-- 对方永远不说话，等于你在一个干净的对话里自问自答。
+- Your messages: `is_from_me = 1`, a single row, no echo.
+- The agent's replies: also sent from your account, with the 🤖 prefix.
+- The peer never says anything — you get a clean thread where you ask and "you" answer.
 
-对方地址的选择：
+Choosing the peer address:
 
-- **最好用一个独立 Apple ID 的邮箱**：邮箱不会被运营商回收，也不会退化成短信。
-- 用手机号也行，但停用的号码可能被运营商重新放号，新机主就会收到你和 Agent 的全部对话；号码长期不在线时，消息也可能变成短信。
-- 想接多个 Agent，就准备多个这样的地址，每个对应一个 Agent。
+- **Best: the email of a separate Apple ID.** Email addresses aren't recycled by carriers and can't fall back to SMS.
+- A phone number works too, but a number you stop paying for may be reassigned, and its new owner would receive everything you and the agent say. If the number goes offline for long, messages may also turn into SMS.
+- Want several agents? Use several such addresses, one per agent.
 
-### 5. iMessage 的投递机制（踩过的坑）
+### 5. How iMessage delivery works (lessons learned)
 
-- 能不能给某个地址发 iMessage，取决于这个地址**有没有在苹果那里注册 iMessage**：至少有一台设备用该 Apple ID 登录了「信息」，并在「发送与接收」里勾选了这个地址。光注册 Apple ID 不够。
-- 地址没注册时，iPhone 在查询阶段就判定「不是 iMessage」，直接按**短信**发。邮箱收不了短信，于是消息停在「未发送」。这时 `chat.db` 里是 `service = 'SMS'`、`is_sent = 0`、`error = 0`，**没有错误码**。
-- 「设置 → 信息 → 以短信发送」只管「iMessage 发失败后要不要改发短信」，管不到查询阶段的判断。
-- 判断方法：在 iPhone 新建信息，输入对方地址，变蓝就是已注册，变红/变灰就是没注册。
-- 一个地址可能在你给账号加/换手机号、重新验证时被从 iMessage 地址里去掉。到「设置 → Apple 账户 → 登录与安全 → 电子邮件与电话号码」重新添加、验证，再去「发送与接收」勾上。
-- 群聊没有回声，只有一份；但 iMessage 会按你用手机号还是邮箱发，把同一个群分裂成两个 `chat guid`，两个都要加进白名单。
+- Whether you can iMessage an address depends on whether that address is **registered with iMessage at Apple**: at least one device must be signed in to Messages with that Apple ID and have the address checked under "Send & Receive". Merely having an Apple ID is not enough.
+- If the address isn't registered, the iPhone decides at lookup time that it's "not iMessage" and sends it as **SMS** right away. An email address can't receive SMS, so the message just sits as "Not Delivered". `chat.db` then shows `service = 'SMS'`, `is_sent = 0`, `error = 0` — **no error code at all**.
+- "Settings → Messages → Send as SMS" only controls whether a *failed* iMessage is retried as SMS. It has no say over the lookup-time decision.
+- To check: start a new message on the iPhone and type the address. Blue means registered; red or grey means not.
+- An address can drop off your iMessage addresses when you add or change a phone number or re-verify your account. Re-add and verify it under "Settings → Apple Account → Sign-In & Security → Email & Phone Numbers", then check it in "Send & Receive".
+- Group chats have no echo — one row per message. But iMessage may split one group into two `chat guid`s depending on whether you send from your phone number or your email; add both to the allowlist.
 
-### 6. 权限：为什么用 Agent SDK 而不是 `claude -p`
+### 6. Permissions: why the Agent SDK instead of `claude -p`
 
-`claude -p` 没有人能点「允许」，规则外的工具会被直接拒绝。这里用 Python 版 Claude Agent SDK：
+With `claude -p` there is nobody to click "Allow", so any tool outside your rules is simply denied. This relay uses the Python Claude Agent SDK instead:
 
-- `setting_sources = user/project/local`：你 `~/.claude/settings.json` 里的放行规则照常生效，不会每次重置。
-- 规则外的操作走 `can_use_tool` 回调，在 `approval_chat` 里发「[权限 #N] … 回 1/2/3」。选 `2` 会把 CLI 给出的建议规则写回配置，以后不再问。超时按拒绝。
-- 审批回答只认你自己在审批会话里的消息，群里别人回 1 无效。
-- 默认可以用 `auto` 模式：日常操作自动放行，危险的才问你。`/mode` 随时切换。
+- `setting_sources = user/project/local`: the allow rules in your `~/.claude/settings.json` apply as usual and never reset.
+- Anything outside those rules goes through the `can_use_tool` callback, which posts "[Permission #N] … reply 1/2/3" to `approval_chat`. Answering `2` writes the CLI's suggested rule back to your settings, so you won't be asked again. A timeout counts as a denial.
+- Approval answers are only accepted from you, in the approval conversation; someone else replying `1` in a group does nothing.
+- `auto` mode is a good default: routine actions are allowed automatically and only risky ones are sent to you. Switch any time with `/mode`.
 
-### 7. dsh：为什么要通过网页版插件，而不是 `dsh headless`
+### 7. dsh: why through the web plugin rather than `dsh headless`
 
-`dsh headless --session-id` 可以续接会话，但如果同时开着 `dsh web`，网页版会接管它看得到的每个会话的写锁并且不释放，下一轮续接就报 `already owned by an active write handle`，只能每轮新开会话。
+`dsh headless --session-id` can resume a session, but if `dsh web` is running at the same time, the web server takes over the write lock of every session it can see and never releases it. The next resume then fails with `already owned by an active write handle`, so every turn ends up in a new session.
 
-两种解决办法都实现了：
+Both fixes are implemented:
 
-- `agent: "dsh"`：headless CLI，用 `dsh-sessions.patch.yml` 把会话存到单独目录（`$DSH_HOME/sessions-imessage`），网页版看不到就不会抢锁。代价是网页上看不到这些会话。
-- `agent: "dsh-web"`（推荐）：通过 [dsh-plugin-discord](https://github.com/ghbhiee/dsh-plugin-discord) 的 `/plugins/imessage` 接口，在网页版进程里建会话、发消息。它复用了 Discord 插件管会话的同一套代码（`SessionBridge`），会话标题是 `[iMessage] MM-DD HH:MM`，网页上能直接看到、接着聊；`/new`、`/sessions`、`/use <id>`、`/current`、`/stop` 和 Discord 里一样用。
+- `agent: "dsh"`: the headless CLI, with `dsh-sessions.patch.yml` storing sessions in a separate directory (`$DSH_HOME/sessions-imessage`). The web server can't see them, so it doesn't grab the lock. The trade-off: these sessions don't show up in the web UI.
+- `agent: "dsh-web"` (recommended): goes through the `/plugins/imessage` API of [dsh-plugin-discord](https://github.com/ghbhiee/dsh-plugin-discord), which creates and prompts sessions inside the web server process. It reuses the same session code the Discord side runs (`SessionBridge`). Sessions are titled `[iMessage] MM-DD HH:MM`, appear in the web UI and can be continued there; `/new`, `/sessions`, `/use <id>`, `/current` and `/stop` work just like on Discord.
 
-### 8. 完全磁盘访问权限：为什么要单独复制一份 Python
+### 8. Full Disk Access: why a dedicated copy of Python
 
-读 `~/Library/Messages/chat.db` 需要「完全磁盘访问权限」，launchd 启动的进程，权限挂在它启动的那个可执行文件上。如果直接用 uv 共享的 Python，等于给这台机器上所有用这个 Python 的脚本都开了全盘权限。所以把 Python 解释器复制一份到 `runtime/`，只给这一份开。
+Reading `~/Library/Messages/chat.db` requires Full Disk Access. For a process started by launchd, the permission attaches to the executable it launches. Granting it to uv's shared Python would give every script on the machine that uses that Python full disk access. So the interpreter is copied into `runtime/`, and only that copy gets the permission.
 
-## 安装
+## Install
 
-要求：macOS、已登录 iMessage 的「信息」、[uv](https://docs.astral.sh/uv/)、Claude Code CLI（用 Claude 时）、dsh（用 dsh 时）。
+Requirements: macOS, Messages signed in to iMessage, [uv](https://docs.astral.sh/uv/), the Claude Code CLI (for Claude), dsh (for dsh).
 
 ```bash
 git clone https://github.com/ghbhiee/imessage-agent.git ~/imessage-agent
 cd ~/imessage-agent
 
-# 专用 Python（只给它开完全磁盘访问权限）
+# dedicated Python (the only one that gets Full Disk Access)
 uv python install 3.12
 cp -R "$(dirname "$(dirname "$(uv python find 3.12)")")" runtime
 uv venv --python runtime/bin/python3.12
 uv sync
 
 cp config.example.json config.json
-.venv/bin/python bridge.py --chats      # 列出会话和 chat guid，填进 config.json
+.venv/bin/python bridge.py --chats      # list conversations and their chat guids for config.json
 ```
 
-1. 系统设置 → 隐私与安全性 → 完全磁盘访问权限 → `+` → 选 `runtime/bin/python3.12`。
-2. 前台试跑：`.venv/bin/python bridge.py`。第一次发消息时 macOS 会问「想控制 信息」，点允许。
-3. 常驻：把 `com.example.imessage-agent.plist` 里的 `YOU` 换成你的用户名，放进 `~/Library/LaunchAgents/`，然后
-   `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.imessage-agent.plist`。
-   改完配置后重启：`launchctl kickstart -k gui/$(id -u)/com.example.imessage-agent`。
+1. System Settings → Privacy & Security → Full Disk Access → `+` → pick `runtime/bin/python3.12`.
+2. Try it in the foreground: `.venv/bin/python bridge.py`. The first time it sends a message, macOS asks whether it may control Messages — click Allow.
+3. Keep it running: replace `YOU` in `com.example.imessage-agent.plist` with your username, put it in `~/Library/LaunchAgents/`, then run
+   `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.imessage-agent.plist`.
+   After editing the config, restart with `launchctl kickstart -k gui/$(id -u)/com.example.imessage-agent`.
 
-`.venv/bin/python bridge.py --send "hi"` 往 `self_chat` 发一条测试消息。
+`.venv/bin/python bridge.py --send "hi"` sends a test message to `self_chat`.
 
-## 配置（config.json）
+## Configuration (config.json)
 
-| 字段 | 说明 |
+| Field | Meaning |
 |---|---|
-| `chats` | 白名单，key 是 chat guid（`--chats` 列出来的） |
-| `chats.*.agent` | `claude`（默认）/ `dsh` / `dsh-web` |
-| `chats.*.allow_from` | 谁能指挥它：`["me"]` 只听你；也可加对方号码/邮箱，或 `"*"`。**别人能指挥的 Agent 拿的是你的全部权限**，慎加 |
-| `chats.*.trigger` | 群里必须以它开头才算指令（如 `"@c"`）；`null` = 每条都算 |
-| `chats.*.prefix` / `cwd` / `model` / `dsh_profile` | 按会话覆盖 |
-| `self_chat` | 发给自己的会话 guid（用于回声去重；不想路由就别放进 `chats`） |
-| `approval_chat` | Claude 的权限请求发到哪个会话 |
-| `agent_prefix` | Claude 回复的前缀，默认 `🤖 ` |
-| `permission_mode` | Claude 默认权限模式：`default` / `acceptEdits` / `auto` / `plan` / … |
-| `max_backlog_age_s` | 桥接重启后，超过这个秒数的旧消息不再处理 |
-| `dsh_web_url` / `dsh_web_secret_file` | dsh-web 后端的地址和密钥文件 |
+| `chats` | The allowlist; keys are chat guids (as listed by `--chats`) |
+| `chats.*.agent` | `claude` (default) / `dsh` / `dsh-web` |
+| `chats.*.allow_from` | Who may command it: `["me"]` means only you; you can add the other side's number/email, or `"*"`. **Anyone who can command the agent gets all of your permissions** — add people with care |
+| `chats.*.trigger` | In groups, a message must start with this to count as a command (e.g. `"@c"`); `null` means every message counts |
+| `chats.*.prefix` / `cwd` / `model` / `dsh_profile` | Per-conversation overrides |
+| `self_chat` | Guid of your message-yourself conversation (used for echo folding; leave it out of `chats` if you don't want it routed) |
+| `approval_chat` | Where Claude's permission prompts are sent |
+| `agent_prefix` | Prefix for Claude's replies, `🤖 ` by default |
+| `permission_mode` | Claude's default permission mode: `default` / `acceptEdits` / `auto` / `plan` / … |
+| `max_backlog_age_s` | After a restart, messages older than this many seconds are skipped |
+| `dsh_web_url` / `dsh_web_secret_file` | Address and secret file for the dsh-web backend |
 
-## 会话里的命令
+## Commands in a conversation
 
-| 命令 | Claude | dsh-web |
+| Command | Claude | dsh-web |
 |---|---|---|
-| `/new` | 新会话 | 新会话（网页上会出现新的 `[iMessage]` 会话） |
-| `/stop` | 中断当前任务，拒绝待审批 | 取消当前回合 |
-| `/status` | 状态、排队、会话、权限模式 | — |
-| `/mode <模式>` | 切换权限模式 | — |
-| `/sessions` `/use <id>` `/current` | — | 列出 / 接管 / 查看会话 |
-| `/help` | 帮助 | 帮助 |
+| `/new` | New session | New session (a new `[iMessage]` session appears in the web UI) |
+| `/stop` | Interrupt the current task and deny pending approvals | Cancel the current turn |
+| `/status` | Status, queue, session, permission mode | — |
+| `/mode <mode>` | Switch permission mode | — |
+| `/sessions` `/use <id>` `/current` | — | List / adopt / show sessions |
+| `/help` | Help | Help |
 
-## 已知限制
+## Known limitations
 
-- iPhone 上 Agent 的回复也显示在「我」这一侧，只能靠前缀区分。
-- 只发最终回复，不发中间过程。长回复按 3000 字切分。
-- Claude 每轮会加载你全部的 user 设置、skills 和 MCP，最简单的一轮也要约 $0.15；可按会话指定 `model`。
-- 轮询 `chat.db`（默认 1 秒一次），不是事件推送。
-- 依赖 `attributedBody` 的 typedstream 解码（新版 macOS 的 `text` 列常为空），苹果改格式时可能需要更新。
+- On the iPhone, the agent's replies also appear on "your" side of the thread; only the prefix tells them apart.
+- Only the final reply is sent, not intermediate progress. Long replies are split every 3000 characters.
+- Claude loads all of your user settings, skills and MCP servers every turn, so even a trivial turn costs about $0.15. You can set a cheaper `model` per conversation.
+- `chat.db` is polled (once a second by default), not pushed.
+- Message text is decoded from `attributedBody` typedstream (the `text` column is often empty on recent macOS); this may need updating if Apple changes the format.
 
 ## License
 
