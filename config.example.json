@@ -1,0 +1,34 @@
+{
+  "self_chat": "any;-;you@example.com",
+  "agent_prefix": "🤖 ",
+  "cwd": "/Users/you/work",
+  "claude_cli": "/Users/you/.local/bin/claude",
+  "model": null,
+  "permission_mode": "auto",
+  "approval_timeout_s": 600,
+  "poll_interval_s": 1.0,
+  "max_backlog_age_s": 600,
+  "dsh_web_url": "http://127.0.0.1:3080",
+  "dsh_web_secret_file": "~/.dsh/profiles/web/discord-notify.secret",
+  "approval_chat": "any;-;+8613800000000",
+  "chats": {
+    "any;-;+8613800000000": {
+      "name": "Claude",
+      "agent": "claude",
+      "allow_from": ["me"],
+      "trigger": null
+    },
+    "any;-;agent-two@example.com": {
+      "name": "dsh",
+      "agent": "dsh-web",
+      "allow_from": ["me"],
+      "trigger": null
+    },
+    "any;+;0123456789abcdef0123456789abcdef": {
+      "name": "family group",
+      "agent": "claude",
+      "allow_from": ["me"],
+      "trigger": "@c"
+    }
+  }
+}

@@ -1,0 +1,8 @@
+# Only for the `dsh` (headless CLI) backend.
+# Keeps relay sessions out of ~/.dsh/sessions: a running `dsh web` adopts any
+# session it can see and keeps its write lock, so the next
+# `dsh headless --session-id` turn fails with "already owned by an active
+# write handle". The `dsh-web` backend does not need this.
+- id: session-persistence-jsonl
+  config:
+    root: !!js dshHomePath('sessions-imessage')

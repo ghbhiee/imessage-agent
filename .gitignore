@@ -1,0 +1,10 @@
+# personal / runtime state
+config.json
+state.json
+state.tmp
+logs/
+HANDOFF.md
+# dedicated Python copy that holds Full Disk Access
+runtime/
+.venv/
+__pycache__/
