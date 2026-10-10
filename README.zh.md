@@ -19,6 +19,7 @@ iPhone「信息」 ──▶ iCloud 同步 ──▶ Mac 的 chat.db ──▶ b
 - 白名单路由：只有配置里列出的会话会被处理，其它会话只读不回。
 - Claude 的权限审批也走 iMessage：回 `1` 允许、`2` 总是允许、`3` 拒绝。
 - dsh 的会话可以直接放在 dsh 网页版里，网页和手机看到的是同一个会话。
+- 家人群：一个权限锁死、有自己人设、自己判断什么时候说话的 Claude（见第 9 节）。
 
 ## 为什么这么做
 
@@ -99,6 +100,25 @@ iMessage 发给自己（自己的手机号或邮箱）是可以的，本项目�
 
 读 `~/Library/Messages/chat.db` 需要「完全磁盘访问权限」，launchd 启动的进程，权限挂在它启动的那个可执行文件上。如果直接用 uv 共享的 Python，等于给这台机器上所有用这个 Python 的脚本都开了全盘权限。所以把 Python 解释器复制一份到 `runtime/`，只给这一份开。
 
+### 9. 家人群：受限的 Agent + 人设
+
+让家人指挥一个「就是你」的 Agent 很危险：谁能指挥它，谁就拿到了你的文件、浏览器和账号。所以群可以设 `"profile": "restricted"`：
+
+- **工具白名单**：只有 `WebSearch`、`WebFetch`，以及只限 `~/Library/Messages/Attachments` 的 `Read`（看家人发的图片）。不能跑命令、写文件、动浏览器、发别的消息。
+- **不加载你的任何设置**（`setting_sources = []`）：没有 `CLAUDE.md`、记忆、MCP、放行规则——它不知道你的私事，也继承不了你的权限。
+- **不走审批**：白名单外一律当场拒绝（`dontAsk` + 拒绝回调），没人能哄它来找你批准。
+- **自己判断要不要说话**：每条消息都带发言人名字（从通讯录查）交给 Agent；不需要它时它回 `[SILENT]`，桥接什么也不发。不用 @。
+- **人设和家人起的名字**：`persona_file` 放在系统提示最前面，`{agent_name}` 会被替换成当前名字。家人定了新名字时，Agent 在回复末尾写 `[NAME: X]`，桥接去掉这一行、把名字存进 `state.json`，署名变成 `🤖X：`。意见不一时听主人的。
+- Claude Code 会把系统提示快照进会话，续接时还是旧人设。所以人设文件或规则一改，桥接会自动开新会话。
+- 建议用便宜的模型（`"model": "sonnet"`）：群里每条消息都要跑一轮。
+
+这里故意不用 dsh：通过网页版插件跑的是你完整的 dsh 配置和全部工具，插件接口也没法按会话限制工具。
+
+### 10. 其它踩过的小坑
+
+- **Mac 睡眠**：Mac 睡着时发的消息，要等它醒来才进 `chat.db`。所以「旧消息不处理」只针对桥接**启动之前**的积压；桥接运行期间晚到的消息照常处理。
+- **dsh-web 的附件**：dsh 网页版没有完全磁盘访问权限，桥接会先把附件复制到 `dsh_web_upload_dir`，再把路径交给它。
+
 ## 安装
 
 要求：macOS、已登录 iMessage 的「信息」、[uv](https://docs.astral.sh/uv/)、Claude Code CLI（用 Claude 时）、dsh（用 dsh 时）。
@@ -133,6 +153,8 @@ cp config.example.json config.json
 | `chats.*.agent` | `claude`（默认）/ `dsh` / `dsh-web` |
 | `chats.*.allow_from` | 谁能指挥它：`["me"]` 只听你；也可加对方号码/邮箱，或 `"*"`。**别人能指挥的 Agent 拿的是你的全部权限**，慎加 |
 | `chats.*.trigger` | 群里必须以它开头才算指令（如 `"@c"`）；`null` = 每条都算 |
+| `chats.*.profile` | `"restricted"`：只给白名单工具、不加载你的设置、不走审批（第 9 节） |
+| `chats.*.persona_file` / `agent_name` | 人设提示（`{agent_name}` 会被替换）和默认名字；家人可以用 `[NAME: X]` 改名 |
 | `chats.*.prefix` / `cwd` / `model` / `dsh_profile` | 按会话覆盖 |
 | `self_chat` | 发给自己的会话 guid（用于回声去重；不想路由就别放进 `chats`） |
 | `approval_chat` | Claude 的权限请求发到哪个会话 |
@@ -140,6 +162,8 @@ cp config.example.json config.json
 | `permission_mode` | Claude 默认权限模式：`default` / `acceptEdits` / `auto` / `plan` / … |
 | `max_backlog_age_s` | 桥接重启后，超过这个秒数的旧消息不再处理 |
 | `dsh_web_url` / `dsh_web_secret_file` | dsh-web 后端的地址和密钥文件 |
+| `dsh_web_upload_dir` | 附件复制到哪里，好让 dsh 读到 |
+| `names` | 手动指定某个号码/邮箱的显示名（默认从通讯录取） |
 
 ## 会话里的命令
 

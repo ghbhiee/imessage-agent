@@ -24,6 +24,7 @@ iPhone Messages ──▶ iCloud sync ──▶ chat.db on the Mac ──▶ bri
 - Allowlist routing: only the conversations listed in the config are handled; everything else is read and ignored.
 - Claude's permission prompts arrive over iMessage too: reply `1` to allow, `2` to always allow, `3` to deny.
 - dsh sessions can live in the dsh web UI, so the browser and your phone show the very same session.
+- Family groups: a locked-down Claude with its own persona that decides by itself when to speak (see §9).
 
 ## Why it is built this way
 
@@ -106,6 +107,25 @@ Both fixes are implemented:
 
 Reading `~/Library/Messages/chat.db` requires Full Disk Access. For a process started by launchd, the permission attaches to the executable it launches. Granting it to uv's shared Python would give every script on the machine that uses that Python full disk access. So the interpreter is copied into `runtime/`, and only that copy gets the permission.
 
+### 9. Family groups: a restricted agent with a persona
+
+Letting family members talk to an agent that runs *as you* is dangerous — whoever can command it gets your files, browser and accounts. So a group can use `"profile": "restricted"`:
+
+- **Tools are a whitelist**: only `WebSearch`, `WebFetch`, and `Read` limited to `~/Library/Messages/Attachments` (so it can look at photos people post). No shell, no file writes, no browser, no sending other messages.
+- **None of your setup is loaded** (`setting_sources = []`): no `CLAUDE.md`, memory, MCP servers or allow rules — it knows nothing private and inherits no permissions.
+- **No approvals**: anything outside the whitelist is denied on the spot (`dontAsk` + a deny callback), so nobody can talk it into asking you.
+- **It decides when to speak**: every message goes to the agent with the speaker's name (looked up in Contacts); when nobody needs it, it answers `[SILENT]` and the relay sends nothing. No `@` needed.
+- **Persona and a name the family picks**: `persona_file` is put at the top of the system prompt with `{agent_name}` filled in. When the family settles on a new name, the agent ends its reply with `[NAME: X]`; the relay strips that line, saves the name in `state.json` and the signature becomes `🤖X：`. The owner's word wins when people disagree.
+- Claude Code snapshots the system prompt into a session, so a resumed session would keep the old persona. When the persona file or the rules change, the relay starts a fresh session automatically.
+- A cheaper model (`"model": "sonnet"`) is sensible: every message in the group costs a turn.
+
+dsh is not used here on purpose: through the web plugin it runs your full dsh profile with all of its tools, and the plugin API has no per-conversation tool restriction.
+
+### 10. Small things that bit
+
+- **Mac asleep**: messages sent while the Mac sleeps land in `chat.db` only after it wakes. The backlog filter therefore only drops messages older than the relay's *own start time*; anything that arrives late while the relay is running is still handled.
+- **Attachments for dsh-web**: the dsh web server has no Full Disk Access, so the relay copies attachments into `dsh_web_upload_dir` before handing the path over.
+
 ## Install
 
 Requirements: macOS, Messages signed in to iMessage, [uv](https://docs.astral.sh/uv/), the Claude Code CLI (for Claude), dsh (for dsh).
@@ -140,6 +160,8 @@ cp config.example.json config.json
 | `chats.*.agent` | `claude` (default) / `dsh` / `dsh-web` |
 | `chats.*.allow_from` | Who may command it: `["me"]` means only you; you can add the other side's number/email, or `"*"`. **Anyone who can command the agent gets all of your permissions** — add people with care |
 | `chats.*.trigger` | In groups, a message must start with this to count as a command (e.g. `"@c"`); `null` means every message counts |
+| `chats.*.profile` | `"restricted"`: whitelisted tools only, none of your settings loaded, no approvals (§9) |
+| `chats.*.persona_file` / `agent_name` | Persona prompt (`{agent_name}` is filled in) and the default name; the family can rename it with `[NAME: X]` |
 | `chats.*.prefix` / `cwd` / `model` / `dsh_profile` | Per-conversation overrides |
 | `self_chat` | Guid of your message-yourself conversation (used for echo folding; leave it out of `chats` if you don't want it routed) |
 | `approval_chat` | Where Claude's permission prompts are sent |
@@ -147,6 +169,8 @@ cp config.example.json config.json
 | `permission_mode` | Claude's default permission mode: `default` / `acceptEdits` / `auto` / `plan` / … |
 | `max_backlog_age_s` | After a restart, messages older than this many seconds are skipped |
 | `dsh_web_url` / `dsh_web_secret_file` | Address and secret file for the dsh-web backend |
+| `dsh_web_upload_dir` | Where attachments are copied so dsh can read them |
+| `names` | Display-name overrides for handles (otherwise taken from Contacts) |
 
 ## Commands in a conversation
 

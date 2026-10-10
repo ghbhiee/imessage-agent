@@ -15,20 +15,34 @@
     "any;-;+8613800000000": {
       "name": "Claude",
       "agent": "claude",
-      "allow_from": ["me"],
+      "allow_from": [
+        "me"
+      ],
       "trigger": null
     },
     "any;-;agent-two@example.com": {
       "name": "dsh",
       "agent": "dsh-web",
-      "allow_from": ["me"],
+      "allow_from": [
+        "me"
+      ],
       "trigger": null
     },
     "any;+;0123456789abcdef0123456789abcdef": {
-      "name": "family group",
+      "name": "family",
       "agent": "claude",
-      "allow_from": ["me"],
-      "trigger": "@c"
+      "profile": "restricted",
+      "model": "sonnet",
+      "persona_file": "personas/amy.md",
+      "agent_name": "Amy",
+      "allow_from": [
+        "*"
+      ],
+      "trigger": null
     }
+  },
+  "dsh_web_upload_dir": "~/dsh_discord/.imessage-uploads",
+  "names": {
+    "+8613900000000": "Grandma"
   }
 }

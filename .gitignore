@@ -8,3 +8,4 @@ HANDOFF.md
 runtime/
 .venv/
 __pycache__/
+workspaces/
